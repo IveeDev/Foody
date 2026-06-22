@@ -1,0 +1,17 @@
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/preflight.css" layer(base);
+@import "tailwindcss/utilities.css";
+
+@import "nativewind/theme";
+
+@theme {
+  --color-background: #ffffff;
+  --color-primary: #ff6b35;
+  --color-primary-dark: #e65e30;
+}
+
+@layer components {
+  .auth-safe-area {
+    @apply flex-1 bg-white;
+  }
+}
