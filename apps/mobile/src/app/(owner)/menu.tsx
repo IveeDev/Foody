@@ -1,12 +1,443 @@
-import { View, Text } from "react-native";
-import React from "react";
+import { useState } from "react";
+import { openSettings } from "expo-linking";
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Image,
+  Modal,
+  Pressable,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
+import { useImageUploader } from "@/lib/uploadthing";
+import { useMyRestaurant } from "@/hooks/useMyRestaurant";
+import { useCategories, useCategoryMutations } from "@/hooks/useMenuCategories";
+import { useMenuItems, useMenuItemMutations } from "@/hooks/useMenuItems";
 
-const OwnerMenuScreen = () => {
-  return (
-    <View>
-      <Text>OwnerMenuScreen</Text>
-    </View>
+export default function OwnerMenuScreen() {
+  const [showAddCategory, setShowAddCategory] = useState(false);
+  const [showAddItem, setShowAddItem] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(
+    null,
   );
-};
+  const [newItemName, setNewItemName] = useState("");
+  const [newItemPrice, setNewItemPrice] = useState("");
+  const [newItemImageUrl, setNewItemImageUrl] = useState<string | null>(null);
 
-export default OwnerMenuScreen;
+  const { data: restaurant, isPending: restaurantPending } = useMyRestaurant();
+
+  const { data: categories = [], isPending: categoriesPending } = useCategories(
+    restaurant?.id!,
+  );
+  const { data: items = [] } = useMenuItems(restaurant?.id!);
+
+  const { add: addCategory, remove: deleteCategory } = useCategoryMutations(
+    restaurant?.id!,
+  );
+  const {
+    add: addItem,
+    toggle: toggleAvailability,
+    remove: deleteItem,
+  } = useMenuItemMutations(restaurant?.id);
+
+  const {
+    openImagePicker: openItemImagePicker,
+    isUploading: uploadingItemImage,
+  } = useImageUploader("menuItemImage", {
+    onClientUploadComplete: (res) => setNewItemImageUrl(res[0].ufsUrl),
+    onUploadError: (error) => Alert.alert("Upload failed", error.message),
+  });
+
+  function handleAddCategory() {
+    const name = newCategoryName.trim();
+    if (!name)
+      return Alert.alert("Name required", "Please enter a category name.");
+    addCategory.mutate(
+      { name },
+      {
+        onSuccess: () => {
+          setNewCategoryName("");
+          setShowAddCategory(false);
+        },
+      },
+    );
+  }
+
+  function handleAddItem() {
+    const name = newItemName.trim();
+    const price = newItemPrice.trim();
+    if (!name || !price)
+      return Alert.alert(
+        "Required fields",
+        "Item name and price are required.",
+      );
+    if (!selectedCategoryId)
+      return Alert.alert("Error", "No category selected.");
+    addItem.mutate(
+      {
+        categoryId: selectedCategoryId,
+        name,
+        price,
+        imageUrl: newItemImageUrl,
+      },
+      {
+        onSuccess: () => {
+          setNewItemName("");
+          setNewItemPrice("");
+          setNewItemImageUrl(null);
+          setShowAddItem(false);
+        },
+      },
+    );
+  }
+
+  function closeAddItemModal() {
+    setShowAddItem(false);
+    setNewItemName("");
+    setNewItemPrice("");
+    setNewItemImageUrl(null);
+  }
+
+  if (restaurantPending || categoriesPending) {
+    return (
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <View style={styles.centered}>
+          <ActivityIndicator size="large" color="#FF6B35" />
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (!restaurant) {
+    return (
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        <View style={styles.centered}>
+          <Text style={styles.emptyText}>
+            Create your restaurant on the Orders tab first.
+          </Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container} edges={["top"]}>
+      <Pressable
+        style={styles.addButton}
+        onPress={() => setShowAddCategory(true)}
+      >
+        <Text style={styles.addButtonText}>+ Add Category</Text>
+      </Pressable>
+
+      <FlatList
+        style={styles.list}
+        data={categories}
+        keyExtractor={(item) => item.id}
+        renderItem={({ item: category }) => {
+          const categoryItems = items.filter(
+            (i) => i.categoryId === category.id,
+          );
+          return (
+            <View style={styles.categoryBlock}>
+              <View style={styles.categoryHeader}>
+                <Text style={styles.categoryName}>{category.name}</Text>
+                <Pressable
+                  onPress={() =>
+                    Alert.alert(
+                      "Delete category?",
+                      "All items in this category will also be deleted.",
+                      [
+                        { text: "Cancel", style: "cancel" },
+                        {
+                          text: "Delete",
+                          style: "destructive",
+                          onPress: () => deleteCategory.mutate(category.id),
+                        },
+                      ],
+                    )
+                  }
+                >
+                  <Text style={styles.deleteText}>Delete</Text>
+                </Pressable>
+              </View>
+
+              {categoryItems.map((item) => {
+                const isAvailable = item.isAvailable !== false;
+                return (
+                  <View key={item.id} style={styles.itemRow}>
+                    {item.imageUrl ? (
+                      <Image
+                        source={{ uri: item.imageUrl }}
+                        style={styles.itemThumb}
+                      />
+                    ) : null}
+                    <View style={styles.itemInfo}>
+                      <Text style={styles.itemName}>{item.name}</Text>
+                      <Text style={styles.itemPrice}>${item.price}</Text>
+                    </View>
+                    <View style={styles.itemActions}>
+                      <View style={styles.availabilityRow}>
+                        <Text style={styles.availabilityLabel}>
+                          {isAvailable ? "Available" : "Unavailable"}
+                        </Text>
+                        <Switch
+                          value={isAvailable}
+                          onValueChange={(value) =>
+                            toggleAvailability.mutate({
+                              id: item.id,
+                              isAvailable: value,
+                            })
+                          }
+                          trackColor={{ false: "#FECACA", true: "#86EFAC" }}
+                          thumbColor={isAvailable ? "#22C55E" : "#EF4444"}
+                        />
+                      </View>
+                      <Pressable
+                        onPress={() =>
+                          Alert.alert("Delete item?", item.name, [
+                            { text: "Cancel", style: "cancel" },
+                            {
+                              text: "Delete",
+                              style: "destructive",
+                              onPress: () => deleteItem.mutate(item.id),
+                            },
+                          ])
+                        }
+                      >
+                        <Text style={styles.deleteText}>Delete</Text>
+                      </Pressable>
+                    </View>
+                  </View>
+                );
+              })}
+
+              <Pressable
+                style={styles.addItemButton}
+                onPress={() => {
+                  setSelectedCategoryId(category.id);
+                  setShowAddItem(true);
+                }}
+              >
+                <Text style={styles.addItemText}>+ Add Item</Text>
+              </Pressable>
+            </View>
+          );
+        }}
+      />
+
+      <Modal visible={showAddCategory} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modal}>
+            <Text style={styles.modalTitle}>New Category</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Category name"
+              value={newCategoryName}
+              onChangeText={setNewCategoryName}
+            />
+            <Pressable
+              style={styles.button}
+              onPress={handleAddCategory}
+              disabled={addCategory.isPending || !newCategoryName.trim()}
+            >
+              {addCategory.isPending ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>Create</Text>
+              )}
+            </Pressable>
+            <Pressable onPress={() => setShowAddCategory(false)}>
+              <Text style={styles.cancelText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={showAddItem} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modal}>
+            <Text style={styles.modalTitle}>New Item</Text>
+            <Pressable
+              style={styles.imagePicker}
+              onPress={() =>
+                void openItemImagePicker({
+                  source: "library",
+                  onInsufficientPermissions: () =>
+                    Alert.alert(
+                      "No Permissions",
+                      "You need to grant permission to your Photos",
+                      [
+                        { text: "Dismiss" },
+                        {
+                          text: "Open Settings",
+                          onPress: () => void openSettings(),
+                        },
+                      ],
+                    ),
+                })
+              }
+              disabled={uploadingItemImage}
+            >
+              {newItemImageUrl ? (
+                <Image
+                  source={{ uri: newItemImageUrl }}
+                  style={styles.itemImage}
+                />
+              ) : (
+                <Text style={styles.imagePickerText}>
+                  {uploadingItemImage
+                    ? "Uploading..."
+                    : "Tap to add item image"}
+                </Text>
+              )}
+            </Pressable>
+            <TextInput
+              style={styles.input}
+              placeholder="Item name"
+              value={newItemName}
+              onChangeText={setNewItemName}
+            />
+            <TextInput
+              style={styles.input}
+              placeholder="Price e.g. 8.99"
+              value={newItemPrice}
+              onChangeText={setNewItemPrice}
+              keyboardType="decimal-pad"
+            />
+            <Pressable
+              style={styles.button}
+              onPress={handleAddItem}
+              disabled={
+                addItem.isPending ||
+                uploadingItemImage ||
+                !newItemName.trim() ||
+                !newItemPrice.trim()
+              }
+            >
+              {addItem.isPending ? (
+                <ActivityIndicator color="#fff" />
+              ) : (
+                <Text style={styles.buttonText}>Create</Text>
+              )}
+            </Pressable>
+            <Pressable onPress={closeAddItemModal}>
+              <Text style={styles.cancelText}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: "#fff" },
+  list: { flex: 1 },
+  centered: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 24,
+  },
+  emptyText: { fontSize: 16, color: "#666", textAlign: "center" },
+  addButton: {
+    marginHorizontal: 16,
+    marginBottom: 12,
+    padding: 14,
+    backgroundColor: "#FF6B35",
+    borderRadius: 8,
+    alignItems: "center",
+  },
+  addButtonText: { color: "#fff", fontWeight: "600", fontSize: 15 },
+  categoryBlock: { marginHorizontal: 16, marginBottom: 24 },
+  categoryHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  categoryName: { fontSize: 18, fontWeight: "700" },
+  deleteText: { color: "#EF4444", fontSize: 14 },
+  itemRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingVertical: 10,
+    borderBottomWidth: 0.5,
+    borderBottomColor: "#eee",
+    gap: 10,
+  },
+  itemThumb: { width: 48, height: 48, borderRadius: 8 },
+  itemActions: { alignItems: "flex-end", gap: 4, flexShrink: 0 },
+  itemInfo: { flex: 1, minWidth: 0 },
+  itemName: { fontSize: 15, fontWeight: "500" },
+  itemPrice: { fontSize: 13, color: "#666", marginTop: 2 },
+  availabilityRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 6,
+    flexShrink: 0,
+  },
+  availabilityLabel: {
+    fontSize: 12,
+    fontWeight: "500",
+    color: "#666",
+    width: 72,
+    textAlign: "right",
+  },
+  addItemButton: {
+    marginTop: 10,
+    padding: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#FF6B35",
+    borderStyle: "dashed",
+    alignItems: "center",
+  },
+  addItemText: { color: "#FF6B35", fontSize: 14 },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.5)",
+    justifyContent: "flex-end",
+  },
+  modal: {
+    backgroundColor: "#fff",
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    padding: 24,
+    gap: 12,
+  },
+  modalTitle: { fontSize: 20, fontWeight: "700", marginBottom: 4 },
+  input: {
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderRadius: 8,
+    padding: 14,
+    fontSize: 16,
+  },
+  button: {
+    backgroundColor: "#FF6B35",
+    borderRadius: 8,
+    padding: 16,
+    alignItems: "center",
+  },
+  buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  cancelText: { textAlign: "center", color: "#666", fontSize: 15 },
+  imagePicker: {
+    height: 120,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#ddd",
+    borderStyle: "dashed",
+    alignItems: "center",
+    justifyContent: "center",
+    overflow: "hidden",
+  },
+  itemImage: { width: "100%", height: "100%" },
+  imagePickerText: { color: "#999", fontSize: 13 },
+});
